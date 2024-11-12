@@ -1,0 +1,43 @@
+\documentclass{article}
+\usepackage{graphicx} % Required for inserting images
+\usepackage{fullpage}
+\title{Quantum Adiabatic Computation}
+\author{Hrishikesh Belagali}
+\usepackage{pdflscape}
+\date{October 2024}
+\usepackage{physics}
+\usepackage{amssymb}
+\begin{document} 
+\maketitle
+\section{Introduction}
+Quantum Adiabatic Computation utilizes the adiabatic theorem of quantum 
+mechanics which states that a time-dependent Hamiltonian in an eigenstate will remain 
+in that eigenstate when subject to evolution, given that the evolution is adiabatic in nature. 
+In this context, adiabatic refers to an evolution rate much slower than the intrinsic frequency of the 
+quantum system. \\
+This is significant for optimization problems. One can start with a simple Hamiltonian with a trivial groundstate, such as a quantum Ising chain without a transverse field. 
+The objective function must be framed in the form of a Hamiltonian. A time-dependent Hamiltonian can be created by interpolating the initial and final Hamiltonians smoothly. 
+Then, if the time-dependent Hamiltonian is evolved, the ground state of the final Hamiltonian can be determined. 
+\subsection{Limitations}
+Quantum adiabatic algorithms scale rather poorly because Pauli matrices for N particles are order $2^N$ matrices. There must be reasonable gaps between the energy values of various eigenstates. 
+Hence, this method does not work for degenerate systems. The method also fails if there are level crossings in the time evolution of the eigenstate. 
+\section{The Problem}
+This project will optimize a transverse-field Ising chain with a transverse field. The Hamiltonian is given by 
+$$\hat H_p = -J\pqty{\sum_{i}Z_iZ_{i+1} + g\sum_{i}X_i}$$
+\subsection{The Initial Hamiltonian}
+As mentioned, the initial Hamiltonian is constructed to have a trivial ground state. This can be a transverse-field Hamiltonian without a transverse field. 
+$$\hat H_i = -J\sum_{i}{Z_iZ_{i+1}}$$ 
+The trivial solutions are as follows: 
+\subsubsection{The ferromagnetic case: $J>0$}
+The particles align themselves in the direction as $\ket{\cdots \uparrow\uparrow\uparrow \cdots}$ or $\ket{\cdots \downarrow\downarrow\downarrow \cdots}$
+
+\subsubsection{The antiferromagnetic case: $J<0$}
+The particles align themselves in an alternate fashion- $\ket{\cdots \uparrow\downarrow\uparrow \cdots}$
+ 
+\subsection{The Interpolated Hamiltonian}
+We create a time parameter $S: \bqty{0, T_f}\to \bqty{0,1}$. The use of this parameter is akin to gradually increasing a transverse field. We choose the interpolation function 
+The interpolation chosen for this implementation $$S(t) = \frac{t}{T_f}$$
+$$\hat H(t) = -J \pqty{\sum_{i}Z_{i}Z_{i+1} + S(t)g\sum_i X_i} $$
+Note that $\hat H(0) = \hat H_i$ and $\hat H(t_f) = \hat H_p$. Starting with the appropriate ground state depending on the sign of $J$, one can adiabatically evolve to the final Hamiltonian and model the quantum phase transition. 
+ 
+\end{document}
