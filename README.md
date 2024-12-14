@@ -1,2 +1,2 @@
-# QA
-Quantum Adiabatic Evolution of the Tranverse Ising Model
+# Discretized Quantum Adiabatic Computation 
+DQAC Algorithm to solve QUBO type problems
