@@ -1,6 +1,7 @@
 import numpy as np 
 import matplotlib.pyplot as plt 
 from scipy.linalg import expm
+from dataclasses import dataclass
 
 ############################################################
 #                      Fundamentals                        #
@@ -27,29 +28,29 @@ class Hamiltonian:
     
     def eigenvalues(self): 
         # Rounding to prevent precision errors
-        return np.real(np.round(np.linalg.eigvalsh(self.matrix), 15))
+        return np.round(np.linalg.eigvalsh(self.matrix), 15) 
     
     def eigenvectors(self): 
         # Rounding to prevent precision errors
         _, vecs = np.linalg.eigh(self.matrix)
-        return np.real(np.round(vecs.T, 15))
+        return np.round(vecs.T, 15)
     
 
 class H_i(Hamiltonian): 
     def __init__(self, num_qubits: int):
         super().__init__(num_qubits)
-        self.groundstate = ket_plus 
+        self.groundstate = ket_plus
         self.matrix = np.zeros((2**num_qubits,2**num_qubits), dtype=complex) 
-
+        
         for i in range(num_qubits): 
             # Construct the controlled gates for each qubit
             C_X = np.kron(np.eye(2**i), np.kron(pauli_X, np.eye((2**(num_qubits-1-i)))))
-            self.matrix -= C_X
+            self.matrix += C_X
             
             # Creating the proposed initial groundstate
             if(i != num_qubits-1): 
                 self.groundstate = np.kron(self.groundstate, ket_plus)
-
+    
     def operate(self, vec: np.array): 
         return self.matrix @ vec
 
@@ -59,7 +60,7 @@ class H_f(Hamiltonian):
         super().__init__(num_qubits)
         
         # Ising Parameters
-        self.J = -Q/4
+        self.J = Q/4
         self.h = 0.25 * np.array([np.sum(Q[i, :]) + np.sum(Q[:, i]) for i in range(num_qubits)])
         self.C = np.sum(Q)/4
         self.groundstate = None # Determined through the computation 
@@ -68,11 +69,11 @@ class H_f(Hamiltonian):
             # Construct the controlled gates for each qubit
             C_X = np.kron(np.eye(2**i), np.kron(pauli_X, np.eye((2**(num_qubits-1-i)))))
             C_Z_i = np.kron(np.eye(2**i), np.kron(pauli_Z, np.eye((2**(num_qubits-1-i)))))
-            self.matrix += self.h[i] * C_X
+            self.matrix -= self.h[i] * C_X
             
             for j in range(num_qubits): 
                 C_Z_j = np.kron(np.eye(2**j), np.kron(pauli_Z, np.eye((2**(num_qubits-1-j)))))
-                self.matrix -=  self.J[i,j] * C_Z_i @ C_Z_j
+                self.matrix +=  self.J[i,j] * C_Z_i @ C_Z_j
 
 class H_T(Hamiltonian): 
     def __init__(self, H_i: Hamiltonian, H_f: Hamiltonian, dT, T):
@@ -96,6 +97,13 @@ class H_T(Hamiltonian):
         # Should remain close to 1 throughout the evolution
         return np.abs(np.vdot(eig, self.groundstate))**2  
 
+@dataclass
+class quantumOutput: 
+    eigs: np.array
+    groundstate: np.array
+    norms: np.array
+    fidelities: np.array
+
 ############################################################
 #                   Adiabatic Annealer                     #
 ############################################################ 
@@ -103,7 +111,10 @@ class H_T(Hamiltonian):
 def annealer(H_problem: H_f):
     # Create the initial Hamiltonian 
     H_initial = H_i(H_problem.num_qubits)
-    
+
+    print(f'H_i Frob: {np.linalg.norm(H_initial.matrix)}')
+    print(f'H_f Frob: {np.linalg.norm(H_problem.matrix)}')
+
     # Determine the gap size 
     energies = np.sort(H_initial.eigenvalues())
     min_gap = energies[1] - energies[0]
@@ -113,22 +124,44 @@ def annealer(H_problem: H_f):
     timesteps = np.arange(T)/T
     Δt = timesteps[1]
     fidelities = np.zeros(T)
+    norms = np.zeros(T)
+    crossings = []
+
     H_adiabatic = H_T(H_i=H_initial, H_f=H_problem, dT=Δt, T=T)
     
     for timestep in range(timesteps.size): 
         # Update the adiabatic Hamiltonian
         H_adiabatic.update(timesteps[timestep])
+        norms[timestep] = np.linalg.norm(H_adiabatic.matrix)
         
         # Evolve the state 
         H_adiabatic.groundstate = H_adiabatic.evolve(timesteps[timestep]) @ H_adiabatic.groundstate 
-        print(np.round(H_adiabatic.groundstate, 3))
         
         # Determine the groundstate eigenvector 
         sorted_eigs = H_adiabatic.eigenvectors()[np.argsort(H_adiabatic.eigenvalues())]
         diag_eig = sorted_eigs[0]
+        crossings.append(H_adiabatic.eigenvalues())
+        # print(np.real(H_adiabatic.groundstate.conj().T @ H_adiabatic.matrix @ H_adiabatic.groundstate) + H_problem.C)
         
         #Evaluate the fidelity 
         fidelities[timestep] = H_adiabatic.fidelity(diag_eig)
+    
+    output = { 
+        'eigs': np.array(crossings),
+        'groundstate': H_adiabatic.groundstate,
+        'norms': norms, 
+        'fidelities': fidelities, 
+    }
+    n_hadamard = np.copy(hadamard)
+    for i in range(H_problem.num_qubits-1): 
+        n_hadamard = np.kron(n_hadamard, hadamard)
+    
+    H_adiabatic.groundstate = n_hadamard @ H_adiabatic.groundstate
+    print(np.round(H_adiabatic.groundstate, 2))
+    p = np.round(np.abs(H_adiabatic.groundstate)**2, 2)
+    print(p)
+    # print(f'|{bin(np.argmax(p))[2:].zfill(H_problem.num_qubits)}⟩')
+    return quantumOutput(**output)
+    
 
-    plt.plot(np.arange(fidelities.size), fidelities)
-    plt.show()
+
