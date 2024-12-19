@@ -28,12 +28,12 @@ class Hamiltonian:
     
     def eigenvalues(self): 
         # Rounding to prevent precision errors
-        return np.round(np.linalg.eigvalsh(self.matrix), 15) 
+        return np.linalg.eigvalsh(self.matrix)
     
     def eigenvectors(self): 
         # Rounding to prevent precision errors
         _, vecs = np.linalg.eigh(self.matrix)
-        return np.round(vecs.T, 15)
+        return vecs.T
     
 
 class H_i(Hamiltonian): 
@@ -58,7 +58,9 @@ class H_f(Hamiltonian):
     def __init__(self, num_qubits: int, Q: np.array):
         if Q.shape[0] != Q.shape[1] or Q.shape[0] != num_qubits: raise ValueError("The given matrix is not a square matrix!")
         super().__init__(num_qubits)
-        
+        # QUBO Parameters
+        self.Q = Q
+
         # Ising Parameters
         self.J = Q/4
         self.h = 0.25 * np.array([np.sum(Q[i, :]) + np.sum(Q[:, i]) for i in range(num_qubits)])
@@ -100,7 +102,7 @@ class H_T(Hamiltonian):
 @dataclass
 class quantumOutput: 
     eigs: np.array
-    groundstate: np.array
+    solution: np.array
     norms: np.array
     fidelities: np.array
 
@@ -111,10 +113,7 @@ class quantumOutput:
 def annealer(H_problem: H_f):
     # Create the initial Hamiltonian 
     H_initial = H_i(H_problem.num_qubits)
-
-    print(f'H_i Frob: {np.linalg.norm(H_initial.matrix)}')
-    print(f'H_f Frob: {np.linalg.norm(H_problem.matrix)}')
-
+    
     # Determine the gap size 
     energies = np.sort(H_initial.eigenvalues())
     min_gap = energies[1] - energies[0]
@@ -141,26 +140,27 @@ def annealer(H_problem: H_f):
         sorted_eigs = H_adiabatic.eigenvectors()[np.argsort(H_adiabatic.eigenvalues())]
         diag_eig = sorted_eigs[0]
         crossings.append(H_adiabatic.eigenvalues())
-        # print(np.real(H_adiabatic.groundstate.conj().T @ H_adiabatic.matrix @ H_adiabatic.groundstate) + H_problem.C)
-        
+
         #Evaluate the fidelity 
         fidelities[timestep] = H_adiabatic.fidelity(diag_eig)
     
-    output = { 
-        'eigs': np.array(crossings),
-        'groundstate': H_adiabatic.groundstate,
-        'norms': norms, 
-        'fidelities': fidelities, 
-    }
+
     n_hadamard = np.copy(hadamard)
     for i in range(H_problem.num_qubits-1): 
         n_hadamard = np.kron(n_hadamard, hadamard)
-    
     H_adiabatic.groundstate = n_hadamard @ H_adiabatic.groundstate
-    print(np.round(H_adiabatic.groundstate, 2))
+    
     p = np.round(np.abs(H_adiabatic.groundstate)**2, 2)
-    print(p)
-    # print(f'|{bin(np.argmax(p))[2:].zfill(H_problem.num_qubits)}⟩')
+    print(f'Ising Vector: |{bin(p.size-np.argmax(p)-1)[2:].zfill(H_problem.num_qubits)}⟩')
+    x_QUBO = np.array([int(digit) for digit in str(bin(p.size-np.argmax(p)-1)[2:].zfill(H_problem.num_qubits))]) 
+    print(x_QUBO.T @ H_problem.Q @ x_QUBO)
+
+    output = { 
+        'eigs': np.array(crossings),
+        'solution': x_QUBO,
+        'norms': norms, 
+        'fidelities': fidelities, 
+    }
     return quantumOutput(**output)
     
 
