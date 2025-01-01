@@ -1,167 +1,61 @@
 import numpy as np 
-import matplotlib.pyplot as plt 
+import qiskit
+from qiskit_aer import Aer
+from qiskit.visualization import plot_histogram, plot_bloch_multivector
 from scipy.linalg import expm
-from dataclasses import dataclass
 
-############################################################
-#                      Fundamentals                        #
-############################################################ 
+# QUBO Formulation 
+order = 3
+Q = np.random.uniform(low=-1.0, high=1.0, size=(order, order))
+Q *= 1e6
+J = 0.25 * Q 
+h = 0.25 * (np.sum(Q, axis=0) + np.sum(Q, axis=1))
 
-# Standard Computational Basis 
-ket_zero = np.array([1, 0], dtype=complex)
-ket_one = np.array([0, 1], dtype=complex)
+# Initial Hamiltonian Formulation 
+pauli_X = np.array([[0, 1], [1, 0]])
+pauli_Z = np.array([[1, 0], [0, -1]])
 
-# Hadamard Basis
-ket_plus = 1/np.sqrt(2) * np.array([1, 1], dtype=complex)
-ket_minus = 1/np.sqrt(2) * np.array([1, -1], dtype=complex)
+initial_matrix = np.zeros(shape=(2**order, 2**order))
 
-# Quantum Gates 
-pauli_X = np.array([[0, 1], [1, 0]], dtype=complex)
-pauli_Z = np.array([[1, 0], [0, -1]], dtype=complex)
-hadamard = 1/np.sqrt(2) * np.array([[1,1], [1,-1]], dtype=complex)
+for i in range(order): 
+    for j in range(order): 
+        Z_i = np.kron(np.eye(2**i), np.kron(pauli_Z, np.eye((2**(order-1-i)))))
+        Z_j = np.kron(np.eye(2**j), np.kron(pauli_Z, np.eye((2**(order-1-j)))))
+        initial_matrix += J[i, j] * (Z_i @ Z_j)
 
-class Hamiltonian: 
-    def __init__(self, num_qubits: int):
-        self.num_qubits = num_qubits
-        self.groundstate = np.zeros(2**num_qubits, dtype=complex) # Implement in subclasses
-        self.matrix = np.zeros((2**num_qubits,2**num_qubits), dtype=complex) 
-    
-    def eigenvalues(self): 
-        # Rounding to prevent precision errors
-        return np.linalg.eigvalsh(self.matrix)
-    
-    def eigenvectors(self): 
-        # Rounding to prevent precision errors
-        _, vecs = np.linalg.eigh(self.matrix)
-        return vecs.T
-    
+# Final Hamiltonian Formulation 
 
-class H_i(Hamiltonian): 
-    def __init__(self, num_qubits: int):
-        super().__init__(num_qubits)
-        self.groundstate = ket_plus
-        self.matrix = np.zeros((2**num_qubits,2**num_qubits), dtype=complex) 
-        
-        for i in range(num_qubits): 
-            # Construct the controlled gates for each qubit
-            C_X = np.kron(np.eye(2**i), np.kron(pauli_X, np.eye((2**(num_qubits-1-i)))))
-            self.matrix += C_X
-            
-            # Creating the proposed initial groundstate
-            if(i != num_qubits-1): 
-                self.groundstate = np.kron(self.groundstate, ket_plus)
-    
-    def operate(self, vec: np.array): 
-        return self.matrix @ vec
+final_matrix = np.copy(initial_matrix)
 
-class H_f(Hamiltonian): 
-    def __init__(self, num_qubits: int, Q: np.array):
-        if Q.shape[0] != Q.shape[1] or Q.shape[0] != num_qubits: raise ValueError("The given matrix is not a square matrix!")
-        super().__init__(num_qubits)
-        # QUBO Parameters
-        self.Q = Q
+for i in range(order): 
+     final_matrix += h[i] * np.kron(np.eye(2**i), np.kron(pauli_X, np.eye((2**(order-1-i)))))
 
-        # Ising Parameters
-        self.J = Q/4
-        self.h = 0.25 * np.array([np.sum(Q[i, :]) + np.sum(Q[:, i]) for i in range(num_qubits)])
-        self.C = np.sum(Q)/4
-        self.groundstate = None # Determined through the computation 
-        
-        for i in range(num_qubits): 
-            # Construct the controlled gates for each qubit
-            C_X = np.kron(np.eye(2**i), np.kron(pauli_X, np.eye((2**(num_qubits-1-i)))))
-            C_Z_i = np.kron(np.eye(2**i), np.kron(pauli_Z, np.eye((2**(num_qubits-1-i)))))
-            self.matrix -= self.h[i] * C_X
-            
-            for j in range(num_qubits): 
-                C_Z_j = np.kron(np.eye(2**j), np.kron(pauli_Z, np.eye((2**(num_qubits-1-j)))))
-                self.matrix +=  self.J[i,j] * C_Z_i @ C_Z_j
+# Circuit Formulation 
+qubits = qiskit.QuantumRegister(order)
+circuit = qiskit.QuantumCircuit(qubits)
 
-class H_T(Hamiltonian): 
-    def __init__(self, H_i: Hamiltonian, H_f: Hamiltonian, dT, T):
-        
-        super().__init__(H_i.num_qubits)
-        self.H_i = H_i 
-        self.H_f = H_f 
-        self.matrix = H_i.matrix 
-        self.groundstate = H_i.groundstate 
-        self.dT = dT
-        self.T = T
-    
-    def update(self, s: float): 
-        self.matrix = (1-s)*self.H_i.matrix + s * self.H_f.matrix   
-    
-    def evolve(self, s:float): 
-        # return expm(-0.5j*s*self.dT*self.H_f.matrix) @ expm(-1j * self.dT * (1-s)*self.H_i.matrix) @ expm(-0.5j*s*self.dT*self.H_f.matrix)
-        return expm(-1j*self.matrix*self.dT)
-    
-    def fidelity(self, eig):
-        # Should remain close to 1 throughout the evolution
-        return np.abs(np.vdot(eig, self.groundstate))**2  
+for i in qubits: 
+    circuit.h(i)
 
-@dataclass
-class quantumOutput: 
-    eigs: np.array
-    solution: np.array
-    norms: np.array
-    fidelities: np.array
+# Adiabatic Setup 
+iterations = 1000
+timesteps = np.linspace(0, iterations, iterations)/iterations
+delta_t = timesteps[1]-timesteps[0]
 
-############################################################
-#                   Adiabatic Annealer                     #
-############################################################ 
+for step in timesteps: 
+     adiabatic_matrix = (1-step) * initial_matrix + step * final_matrix
+     adiabatic_expm = expm(-1j * delta_t * adiabatic_matrix)
+     interpolated_gate = qiskit.circuit.library.UnitaryGate(adiabatic_expm)
+     interpolated_gate.name = f'U({step:.3f})'
+     circuit.append(interpolated_gate, qubits)
 
-def annealer(H_problem: H_f):
-    # Create the initial Hamiltonian 
-    H_initial = H_i(H_problem.num_qubits)
-    
-    # Determine the gap size 
-    energies = np.sort(H_initial.eigenvalues())
-    min_gap = energies[1] - energies[0]
-    T = (int) (1/min_gap * 1e5)
-    
-    # 0, Δt/T, 2Δt/T ..... nΔt/T (1)
-    timesteps = np.arange(T)/T
-    Δt = timesteps[1]
-    fidelities = np.zeros(T)
-    norms = np.zeros(T)
-    crossings = []
+sim =  Aer.get_backend('aer_simulator')
+circuit_init = circuit.copy() 
+circuit_init.save_statevector()
 
-    H_adiabatic = H_T(H_i=H_initial, H_f=H_problem, dT=Δt, T=T)
-    
-    for timestep in range(timesteps.size): 
-        # Update the adiabatic Hamiltonian
-        H_adiabatic.update(timesteps[timestep])
-        norms[timestep] = np.linalg.norm(H_adiabatic.matrix)
-        
-        # Evolve the state 
-        H_adiabatic.groundstate = H_adiabatic.evolve(timesteps[timestep]) @ H_adiabatic.groundstate 
-        
-        # Determine the groundstate eigenvector 
-        sorted_eigs = H_adiabatic.eigenvectors()[np.argsort(H_adiabatic.eigenvalues())]
-        diag_eig = sorted_eigs[0]
-        crossings.append(H_adiabatic.eigenvalues())
+result = sim.run(circuit_init.decompose().decompose(), shots=1024).result() 
+plot_histogram(result.get_counts())
 
-        #Evaluate the fidelity 
-        fidelities[timestep] = H_adiabatic.fidelity(diag_eig)
-    
-
-    n_hadamard = np.copy(hadamard)
-    for i in range(H_problem.num_qubits-1): 
-        n_hadamard = np.kron(n_hadamard, hadamard)
-    H_adiabatic.groundstate = n_hadamard @ H_adiabatic.groundstate
-    
-    p = np.round(np.abs(H_adiabatic.groundstate)**2, 2)
-    print(f'Ising Vector: |{bin(p.size-np.argmax(p)-1)[2:].zfill(H_problem.num_qubits)}⟩')
-    x_QUBO = np.array([int(digit) for digit in str(bin(p.size-np.argmax(p)-1)[2:].zfill(H_problem.num_qubits))]) 
-    print(x_QUBO.T @ H_problem.Q @ x_QUBO)
-
-    output = { 
-        'eigs': np.array(crossings),
-        'solution': x_QUBO,
-        'norms': norms, 
-        'fidelities': fidelities, 
-    }
-    return quantumOutput(**output)
-    
-
-
+output_array = -np.array([-1, -1, -1])
+print(J*4e-6)
+print((output_array.T @ J @ output_array + np.dot(h, output_array) + np.sum(J))*1e-6)
