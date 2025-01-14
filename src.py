@@ -3,7 +3,7 @@
 #############################################################
 import numpy as np 
 import qiskit
-import qiskit.quantum_info
+import qiskit.quantum_info 
 from qiskit_aer import Aer
 from scipy.linalg import expm
 from typing import Dict
