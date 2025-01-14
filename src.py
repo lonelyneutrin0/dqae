@@ -1,27 +1,58 @@
+#############################################################
+#                    Required Libraries                     #
+#############################################################
 import numpy as np 
 import qiskit
+import qiskit.quantum_info
 from qiskit_aer import Aer
 from scipy.linalg import expm
-import itertools 
 from typing import Dict
 from dataclasses import dataclass
-import qiskit.visualization
-import matplotlib.pyplot as plt 
-import pprint
 
+#############################################################
+#                      Utility Classes                      #
+#############################################################
+@dataclass 
+class Query: 
+    """ 
+    Query Class to handle algorithm parameters
+
+    Q: QUBO matrix
+    iterations: Number of adiabatic steps. Defaults to 10000
+    shots: Number of experiment shots on Aer. Defaults to 1024
+    """
+    Q: np.array
+    iterations:int=10000
+    shots:int=1024
 @dataclass
-class QUBO_solution: 
+class Result: 
+    """
+    Result Class to handle algorithm output 
+
+    prob: Probability of each bit vector 
+    eigs: Instantaneous eigenvalue series throughout evolution 
+    counts: Experiment count results
+    statevector: Final statevector 
+    """
     prob: Dict 
     eigs: np.array
+    counts: qiskit.result.Counts
+    statevector: qiskit.quantum_info.Statevector
 
-def q_anneal(Q: np.array)->Dict: 
+#############################################################
+#                       DQAE Algorithm                      #
+#############################################################
+def q_anneal(Query)->Result: 
     """
     Quantum Adiabatic Evolution Algorithm to solve QUBO Problems:  
+    -------------------------------------------------------------
     """
+    Q = Query.Q
+
     # Make sure the matrix is square 
     if(Q.shape[0] != Q.shape[1]): raise ValueError('Improper matrix dimensionality!')
 
-    # Convert QUBO to Ising 
+    # Convert QUBO to Ising Model
     J = 0.25 * Q 
     h = 0.25 * (np.sum(Q, axis=0) + np.sum(Q, axis=1))
     order = Q.shape[0]
@@ -34,33 +65,36 @@ def q_anneal(Q: np.array)->Dict:
     pauli_X = np.array([[0, 1], [1, 0]])
     pauli_Z = np.array([[1, 0], [0, -1]])
 
-    # Create the Hamiltonia 
-    initial_matrix = np.zeros(shape=(2**order, 2**order))
-    final_matrix = np.zeros_like(initial_matrix)
-    
-    # Create final matrix O(n^2) for now, will implement einsum later 
-    for i in range(order): 
-        for j in range(order): 
-            Z_i = np.kron(np.eye(2**i), np.kron(pauli_Z, np.eye((2**(order-1-i)))))
-            Z_j = np.kron(np.eye(2**j), np.kron(pauli_Z, np.eye((2**(order-1-j)))))
-            final_matrix += J[i, j] * (Z_i @ Z_j)
+    Z = np.zeros((order, 2**order, 2**order))
+    X = np.zeros((order, 2**order, 2**order))
 
-    # Add transverse magnetic field terms O(n) for now, will implement einsum later 
-    for i in range(order): 
-        
-        initial_matrix += np.kron(np.eye(2**i), np.kron(pauli_Z, np.eye((2**(order-1-i)))))
-        final_matrix  += h[i] * np.kron(np.eye(2**i), np.kron(pauli_X, np.eye((2**(order-1-i)))))
+    for i in range(order):
 
-        # Hadamardize the circuit. Initially, we want each state to be equiprobable. 
+        # Multipartite Hilbert Operators
+        Z[i] = np.kron(
+            np.eye(2**i), 
+            np.kron(pauli_Z, np.eye(2**(order - 1 - i)))
+        )
+        X[i] = np.kron(
+            np.eye(2**i), 
+            np.kron(pauli_X, np.eye(2**(order - 1 - i)))
+        )
+
+        # Hadamardize the circuit to ensure equiprobable initial state
         circuit.h(i)
 
-    # Adiabatic Setup 
-    iterations = 10000
-    timesteps = np.linspace(0, iterations, iterations)/iterations
+    # Create the Hamiltonian
+    x_term = np.einsum('i,ikl->kl', h, X)
+    zz_term = np.einsum('ij,ikl,jkl->kl', J, Z, Z)
+    z_term = np.sum(Z, axis=0)
     
-    # The timestep 
-    delta_t = timesteps[1]-timesteps[0] 
+    initial_matrix = z_term
+    final_matrix = zz_term + x_term
 
+    # Adiabatic Setup 
+    iterations = Query.iterations
+    timesteps = np.linspace(0, 1, iterations)
+    delta_t = timesteps[1]-timesteps[0] # Δt
     eigseries = []
     idx = np.argsort(np.linalg.eigvals(initial_matrix))
 
@@ -82,16 +116,11 @@ def q_anneal(Q: np.array)->Dict:
     circuit_init.save_statevector()
     
     # Result processing
-    result = sim.run(circuit_init.decompose().decompose(), shots=1024).result() 
+    result = sim.run(circuit_init.decompose().decompose(), shots=Query.shots).result() 
     state = np.array(result.get_statevector())
     prob = np.abs(state)**2
-    
-    #temp 
-    qiskit.visualization.plot_histogram(result.get_counts())
-    plt.show() 
-
-    result_dict = {list(itertools.product([0, 1], repeat=order))[i] : prob[i] for i in range(prob.size)}
+    result_dict = {bin(i)[2:].zfill(order) : prob[i] for i in range(prob.size)}
     eigseries = np.array(eigseries).T
 
-    return QUBO_solution(result_dict, eigseries)
+    return Result(result_dict, eigseries, result.get_counts(), result.get_statevector())
 
